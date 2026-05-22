@@ -1109,7 +1109,7 @@ async def cleanup_expired_vips(group: str):
             return
 
         now_ts = int(datetime.now(timezone.utc).timestamp())
-        expire_seconds = 48 * 60 * 60
+        expire_seconds = 26 * 60 * 60
 
         items = zip(vip_data[0::2], vip_data[1::2])
 
