@@ -1888,11 +1888,13 @@ async def on_message(message: discord.Message):
             )
 
         group = get_group_from_channel(message.channel.id)
-        # limpiar VIPs expirados
-        await cleanup_expired_vips(group)
+
         if not group:
-            logger.warning("Canal sin grupo configurado: %s", message.channel.id)
+            logger.warning("Canal sin grupo configurado: %s",message.channel.id)
             return
+
+# limpiar VIPs expirados
+        await cleanup_expired_vips(group)
 
 
 
