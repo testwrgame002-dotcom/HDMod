@@ -975,62 +975,47 @@ async def get_rival_duo_by_id(duo_id: str):
 
 
 async def resolve_rival_duo_owner_by_game_id(game_id: str):
-    """
-    Busca si un ID de 16 dígitos pertenece a un Rival Duo.
-    Solo devuelve dueño válido si ese ID es el ID activo actual del Duo.
-    """
-    game_id = str(game_id or "").strip()
+    try:
+        rival_duos = await load_rival_duos()
 
-    if not re.fullmatch(r"\d{16}", game_id):
+        for duo_id, duo in rival_duos.items():
+            online_users = duo.get("onlineUsers") or {}
+            members = duo.get("members") or {}
+
+            for member_discord_id, member_data in members.items():
+                member_game_id = str(member_data.get("gameId") or "").strip()
+
+                if member_game_id != game_id:
+                    continue
+
+                if not online_users.get(str(member_discord_id), False):
+                    continue
+
+                display_name = (
+                    member_data.get("name")
+                    or member_data.get("heartbeatName")
+                    or member_discord_id
+                )
+
+                return {
+                    "discord_id": member_discord_id,
+                    "display_name": display_name,
+                    "mention": f"<@{member_discord_id}>",
+                    "duo_id": duo_id,
+                    "duo_name": " & ".join(
+                        [
+                            (m.get("name") or m.get("heartbeatName") or uid)
+                            for uid, m in members.items()
+                        ]
+                    ),
+                    "game_id": game_id,
+                }
+
         return None
 
-    ref = await redis_hget_json(rival_duo_by_gameid_key(), game_id, None)
-
-    if not ref:
+    except Exception as e:
+        print(f"❌ Error resolving rival duo owner: {e}")
         return None
-
-    duo_id = ref.get("duoId")
-    discord_id = str(ref.get("discordId") or "")
-
-    if not duo_id or not discord_id:
-        return None
-
-    duo = await get_rival_duo_by_id(duo_id)
-
-    if not duo:
-        return None
-
-    active_game_id = str(duo.get("activeGameId") or "").strip()
-
-    if active_game_id != game_id:
-        return None
-
-    members = duo.get("members") or {}
-    member = members.get(discord_id)
-
-    if not member:
-        return None
-
-    display_name = (
-        member.get("name")
-        or member.get("heartbeatName")
-        or discord_id
-    )
-
-    return {
-        "discord_id": discord_id,
-        "display_name": display_name,
-        "mention": f"<@{discord_id}>",
-        "duo_id": duo_id,
-        "duo_name": " & ".join(
-            [
-                (m.get("name") or m.get("heartbeatName") or uid)
-                for uid, m in members.items()
-            ]
-        ),
-        "game_id": game_id,
-    }
-
 
 async def get_rival_duo_mentions_from_online_ids(online_ids):
     """
