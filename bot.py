@@ -1205,11 +1205,11 @@ if group == "Elite_Four":
             if mention not in mentions:
                 mentions.append(mention)
 
-        return mentions
+    return mentions
 
-    except Exception as e:
-        logger.exception("get_online_mentions Redis error: %s", e)
-        return []
+except Exception as e:
+    logger.exception("get_online_mentions Redis error: %s", e)
+    return []
 
 def get_utc6_date_string() -> str:
     now_utc = datetime.now(timezone.utc)
