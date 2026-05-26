@@ -516,7 +516,9 @@ async def download_pil_image(attachment: discord.Attachment) -> Image.Image:
     return Image.open(io.BytesIO(data)).convert("RGBA")
 
 def is_direct_gp_passthrough_image(img: Image.Image) -> bool:
-    return img.size == (DIRECT_GP_WIDTH, DIRECT_GP_HEIGHT)
+    width, height = img.size
+
+    return width > 1000 and height == DIRECT_GP_HEIGHT
 
 
 def build_pack_label_from_meta(meta: dict) -> str:
@@ -1179,12 +1181,29 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
-        if group == "Elite_Four":
-            duo_mentions = await get_rival_duo_mentions_from_online_ids(online_ids)
+if group == "Elite_Four":
 
-            for mention in duo_mentions:
-                if mention not in mentions:
-                    mentions.append(mention)
+    rival_duos = await redis_hgetall_json("rival_duos")
+
+    for duo_id, duo_data in rival_duos.items():
+
+        active_game_id = str(
+            duo_data.get("activeGameId", "")
+        ).strip()
+
+        active_discord_id = str(
+            duo_data.get("activeDiscordId", "")
+        ).strip()
+
+        if (
+            active_game_id
+            and active_discord_id
+            and active_game_id in online_ids
+        ):
+            mention = f"<@{active_discord_id}>"
+
+            if mention not in mentions:
+                mentions.append(mention)
 
         return mentions
 
