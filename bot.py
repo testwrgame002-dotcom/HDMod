@@ -1181,35 +1181,36 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
-if group == "Elite_Four":
+        # TODO ESTO VA DENTRO DEL TRY
+        if group == "Elite_Four":
 
-    rival_duos = await redis_hgetall_json("rival_duos")
+            rival_duos = await redis_hgetall_json("rival_duos")
 
-    for duo_id, duo_data in rival_duos.items():
+            for duo_id, duo_data in rival_duos.items():
 
-        active_game_id = str(
-            duo_data.get("activeGameId", "")
-        ).strip()
+                active_game_id = str(
+                    duo_data.get("activeGameId", "")
+                ).strip()
 
-        active_discord_id = str(
-            duo_data.get("activeDiscordId", "")
-        ).strip()
+                active_discord_id = str(
+                    duo_data.get("activeDiscordId", "")
+                ).strip()
 
-        if (
-            active_game_id
-            and active_discord_id
-            and active_game_id in online_ids
-        ):
-            mention = f"<@{active_discord_id}>"
+                if (
+                    active_game_id
+                    and active_discord_id
+                    and active_game_id in online_ids
+                ):
+                    mention = f"<@{active_discord_id}>"
 
-            if mention not in mentions:
-                mentions.append(mention)
+                    if mention not in mentions:
+                        mentions.append(mention)
 
-    return mentions
+        return mentions
 
-except Exception as e:
-    logger.exception("get_online_mentions Redis error: %s", e)
-    return []
+    except Exception as e:
+        logger.exception("get_online_mentions Redis error: %s", e)
+        return []
 
 def get_utc6_date_string() -> str:
     now_utc = datetime.now(timezone.utc)
