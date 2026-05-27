@@ -93,6 +93,8 @@ VALID_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp")
 PROCESSED_MESSAGES = set()
 DIRECT_GP_WIDTH = 1270
 DIRECT_GP_HEIGHT = 300
+DIRECT_GP_SQUARE_SIZE = 1270
+
 MAX_SCORE_ACCEPT = 2200
 MAX_SCORE_ACCEPT_WITH_GAP = 3600
 MIN_SCORE_GAP = 140
@@ -518,7 +520,19 @@ async def download_pil_image(attachment: discord.Attachment) -> Image.Image:
 def is_direct_gp_passthrough_image(img: Image.Image) -> bool:
     width, height = img.size
 
-    return width > 1000 and height == DIRECT_GP_HEIGHT
+    # =====================================================
+    # FORMATO ORIGINAL PANORÁMICO
+    # =====================================================
+    if width > 1000 and height == DIRECT_GP_HEIGHT:
+        return True
+
+    # =====================================================
+    # NUEVO FORMATO CUADRADO HD
+    # =====================================================
+    if width == DIRECT_GP_SQUARE_SIZE and height == DIRECT_GP_SQUARE_SIZE:
+        return True
+
+    return False
 
 
 def build_pack_label_from_meta(meta: dict) -> str:
