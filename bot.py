@@ -1838,183 +1838,137 @@ async def on_ready():
 @client.event
 async def on_message(message: discord.Message):
     try:
+        # =========================================================
+        # 1. LOG DE AUDITORÍA DE ENTRADA
+        # =========================================================
         logger.info(
             "on_message author=%s author_id=%s bot=%s webhook_id=%s channel_id=%s content=%r attachments=%s",
-            message.author,
-            message.author.id,
-            message.author.bot,
-            message.webhook_id,
-            message.channel.id,
-            message.content,
-            [a.filename for a in message.attachments]
+            message.author, message.author.id, message.author.bot, message.webhook_id,
+            message.channel.id, message.content, [a.filename for a in message.attachments]
         )
 
-        if message.author.id == client.user.id:
-            logger.info("Ignorado: mensaje del propio bot")
-            return
-
-        if message.id in PROCESSED_MESSAGES:
-            logger.info("Ignorado: mensaje ya procesado %s", message.id)
-            return
-
-        if not TEMPLATES:
-            logger.info("Ignorado: no hay templates cargados")
+        if message.author.id == client.user.id or message.id in PROCESSED_MESSAGES or not TEMPLATES:
             return
 
         if not is_target_message(message):
-            logger.info("Ignorado: no coincide con filtro webhook/canal/trigger")
             return
 
         logger.info("Mensaje webhook objetivo detectado, procesando...")
 
         gp_result = await get_best_gp_image_attachment(message)
         if gp_result is None:
-            logger.info("No se encontró imagen válida en attachments")
             return
 
         gp_attachment, source_img = gp_result
         original_gp_image_path = OUTPUT_DIR / f"original_gp_{message.id}_{gp_attachment.filename}"
         await download_attachment_to_file(gp_attachment, original_gp_image_path)
-        logger.info("gp_attachment seleccionado: %s", gp_attachment.filename)
-        logger.info("source_img size: %s", source_img.size)
 
         PROCESSED_MESSAGES.add(message.id)
-
         if len(PROCESSED_MESSAGES) > 1000:
             PROCESSED_MESSAGES.clear()
 
-        # result = await asyncio.to_thread(process_gp_image, source_img, message.id, message.content)
-
-        if is_direct_gp_passthrough_image(source_img):
-            logger.info(
-                "Direct passthrough image detected for message_id=%s with size=%s. Skipping HD detection.",
-                message.id,
-                source_img.size
-            )
-
-            result = process_direct_gp_passthrough(
-                message.id,
-                message.content,
-                original_gp_image_path
-            )
-
-        else:
-            result = await asyncio.to_thread(
-                process_gp_image,
-                source_img,
-                message.id,
-                message.content
-            )
-
+        # =========================================================
+        # 2. PROCESAMIENTO ADAPTADO A MANTENIMIENTO
+        # =========================================================
         group = get_group_from_channel(message.channel.id)
-
         if not group:
-            logger.warning("Canal sin grupo configurado: %s",message.channel.id)
+            logger.warning("Canal sin grupo configurado: %s", message.channel.id)
             return
 
-# limpiar VIPs expirados
+        # Si estamos en modo mantenimiento, forzamos un diccionario simulado sin pasar por OpenCV
+        if MAINTENANCE_USE_ORIGINAL_IMAGE:
+            logger.info("Modo mantenimiento activo: Saltando OpenCV por completo para resolución %s", source_img.size)
+            meta = parse_heartbeat_metadata(message.content)
+            pack_label = build_pack_label_from_meta(meta)
+            
+            result = {
+                "two_star_count": 0,
+                "found_count": 5,
+                "overlay_path": None,
+                "debug_path": None,
+                "pack_label": pack_label,
+                "heartbeat_meta": meta,
+                "final_image_path": original_gp_image_path,
+                "has_invalid": False,
+                "direct_passthrough": True,
+            }
+            is_valid_gp = True  # Forzar a verdadero para asegurar el registro
+        else:
+            # Flujo normal fuera de mantenimiento
+            if is_direct_gp_passthrough_image(source_img):
+                result = process_direct_gp_passthrough(message.id, message.content, original_gp_image_path)
+            else:
+                result = await asyncio.to_thread(process_gp_image, source_img, message.id, message.content)
+            
+            min_two_star = MIN_TWO_STAR_BY_GROUP.get(group, 0)
+            is_valid_gp = (
+                result.get("direct_passthrough", False)
+                or (
+                    not result.get("has_invalid", False)
+                    and result.get("found_count", 0) == 5
+                    and result.get("two_star_count", 0) >= min_two_star
+                )
+            )
+
+        # Resolver información del dueño del GP
         await cleanup_expired_vips(group)
-
-
-
         owner_info = await resolve_gp_owner(client, message.content, group)
         friend_id = result["heartbeat_meta"].get("game_id") or extract_friend_id(message.content)
-        logger.info("Extracted VIP friend_id=%s from message_id=%s", friend_id, message.id)
+        logger.info("Extracted friend_id=%s para verificación VIP", friend_id)
 
+        # Sobrescribir si pertenece a un Rival Duo (Elite Four)
         if group == "Elite_Four" and friend_id:
             rival_owner = await resolve_rival_duo_owner_by_game_id(friend_id)
-
             if rival_owner:
-                logger.info(
-                    "Rival Duo GP owner override: friend_id=%s discord_id=%s duo=%s",
-                    friend_id,
-                    rival_owner.get("discord_id"),
-                    rival_owner.get("duo_name"),
-                )
-
                 owner_info = {
                     "discord_id": rival_owner.get("discord_id"),
                     "display_name": rival_owner.get("display_name"),
                     "mention": rival_owner.get("mention"),
                 }
 
-        # Enriquecer meta para el post
         result["heartbeat_meta"]["owner_discord_id"] = owner_info.get("discord_id")
         result["heartbeat_meta"]["owner_display_name"] = owner_info.get("display_name")
         result["heartbeat_meta"]["owner_mention"] = owner_info.get("mention")
 
-        
-
-        min_two_star = MIN_TWO_STAR_BY_GROUP.get(group, 0)
-
-
-        is_valid_gp = (
-            result.get("direct_passthrough", False)
-            or (
-                not result.get("has_invalid", False)
-                and result.get("found_count", 0) == 5
-                and result.get("two_star_count", 0) >= min_two_star
-            )
-        )
-
-
-# CAMBIO 1: Permitir agregar a la lista VIP tanto si es un GP válido por CV2/Passthrough 
-        # O si el bot está procesando en modo mantenimiento.
+        # =========================================================
+        # 3. REGISTRO GLOBAL DE GOD PACK Y LISTA VIP
+        # =========================================================
         if is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE:
-            if MAINTENANCE_USE_ORIGINAL_IMAGE and not is_valid_gp:
-                logger.info("Modo mantenimiento activo: Forzando registro de VIP ID para imagen normal: %s | group=%s", friend_id, group)
+            if MAINTENANCE_USE_ORIGINAL_IMAGE:
+                logger.info("Modo mantenimiento activo: Forzando registro completo para: %s | group=%s", friend_id, group)
             else:
-                logger.info("Valid GP confirmed. Trying to add VIP ID: %s | group=%s", friend_id, group)
-                
+                logger.info("Valid GP confirmed. Registrando de forma normal...")
+
             if friend_id:
                 try:
                     await add_vip_id(friend_id, group)
                 except Exception as e:
-                    logger.exception("Failed to add VIP, continuing GP flow: %s", e)
+                    logger.exception("Failed to add VIP: %s", e)
+            else:
+                logger.warning("No se pudo registrar VIP: friend_id está vacío.")
 
             try:
                 await register_user_gp(owner_info)
             except Exception as e:
-                logger.exception("Failed to save user GP, continuing GP flow: %s", e)
+                logger.exception("Failed to save user GP: %s", e)
 
             try:
                 await update_stats_safe(group, increment_gp_callback)
             except Exception as e:
-                logger.exception("Failed to update live stats, continuing GP flow: %s", e)
-        
+                logger.exception("Failed to update live stats: %s", e)
 
+        # =========================================================
+        # 4. CREACIÓN DEL HILO DEL FORO / PUBLICACIÓN
+        # =========================================================
         post_data = None
         post_url = None
         post_thread = None
 
-        should_create_post = is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE
-
-        post_image_path = None
-        if should_create_post:
-            if MAINTENANCE_USE_ORIGINAL_IMAGE:
-                post_image_path = original_gp_image_path
-            else:
-                post_image_path = result["final_image_path"]
-
-        if should_create_post and post_image_path is not None:
+        if is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE:
             post_title = build_post_title(result["heartbeat_meta"], result["pack_label"])
-            online_mentions = await get_online_mentions(group)
-
-          #  post_body = build_forum_post_text(
-           #     result["heartbeat_meta"],
-            #    result["pack_label"],
-             #   online_mentions
-            #)     
-
             post_data = await create_forum_post_with_image(
-                client,
-                group,
-                post_title,
-                post_image_path,
-                content="‎"
+                client, group, post_title, original_gp_image_path, content="‎"
             )
-
-
 
         if post_data:
             post_thread = post_data["thread"]
@@ -2022,24 +1976,17 @@ async def on_message(message: discord.Message):
 
             if post_thread is not None:
                 online_mentions = []
-
                 try:
                     online_mentions = await get_online_mentions(group)
                 except Exception as e:
                     logger.exception("Failed to load online mentions: %s", e)
 
-                info_panel = build_forum_info_panel(
-                    result["heartbeat_meta"],
-                    result["pack_label"],
-                    online_mentions
-                )
-
+                info_panel = build_forum_info_panel(result["heartbeat_meta"], result["pack_label"], online_mentions)
                 vote_key = str(post_thread.id)
                 vote_data_saved = False
 
                 try:
                     vote_data = await load_vote_state(group)
-
                     if vote_key not in vote_data:
                         vote_data[vote_key] = {
                             "group": group,
@@ -2055,154 +2002,65 @@ async def on_message(message: discord.Message):
                             "meta": result["heartbeat_meta"],
                             "pack_label": result["pack_label"],
                         }
-
                     await save_vote_state(group, vote_data)
                     vote_data_saved = True
-
                 except Exception as e:
                     logger.exception("Failed to save vote state: %s", e)
 
                 if vote_data_saved:
                     vote_view = GPVoteView(vote_key=vote_key, group=group)
-
                     try:
-                        await post_thread.send(
-                            content=info_panel,
-                            view=vote_view,
-                            allowed_mentions=discord.AllowedMentions(users=True)
-                        )
+                        await post_thread.send(content=info_panel, view=vote_view, allowed_mentions=discord.AllowedMentions(users=True))
                     except Exception as e:
-                        logger.exception("Failed to send forum info panel with buttons: %s", e)
-                else:
-                    try:
-                        await post_thread.send(
-                            content=info_panel + "\n\nVoting disabled (state not saved)."
-                        )
-                    except Exception as e:
-                        logger.exception("Failed to send forum info panel without buttons: %s", e)
-###########
-        view = ForumLinkView(
-            post_url,
-            result["heartbeat_meta"],
-            result["pack_label"]
-        ) if post_url else None
+                        logger.exception("Failed to send forum info panel: %s", e)
 
-        # =========================
-        # 1. RESPUESTA LIMPIA EN CANAL ORIGINAL
-        # =========================
+        view = ForumLinkView(post_url, result["heartbeat_meta"], result["pack_label"]) if post_url else None
+
+        # =========================================================
+        # 5. RESPUESTA EN EL CANAL ORIGINAL
+        # =========================================================
         sent_main = None
-        original_files = []
-
-
-
-        if is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE:
-            if MAINTENANCE_USE_ORIGINAL_IMAGE:
-                original_files.append(
-                    discord.File(str(original_gp_image_path), filename="gp_original.png")
-                )
-            elif result.get("direct_passthrough", False):
-                original_files.append(
-                    discord.File(str(result["final_image_path"]), filename="gp_original.png")
-                )
-            elif result["final_image_path"] is not None:
-                original_files.append(
-                    discord.File(str(result["final_image_path"]), filename="gp_hd.png")
-                )
-        
+        original_files = [discord.File(str(original_gp_image_path), filename="gp_original.png")]
 
         if original_files or view is not None:
-            sent_main = await message.channel.send(
-                files=original_files,
-                view=view
-            )
-        else:
-            logger.info("No se responde en canal principal (GP inválido o incompleto).")
-
+            sent_main = await message.channel.send(files=original_files, view=view)
 
         if post_data and sent_main is not None:
             try:
-                post_thread = post_data["thread"]
-                vote_key = str(post_thread.id)
-
+                vote_key = str(post_data["thread"].id)
                 vote_data = await load_vote_state(group)
-
                 if vote_key in vote_data:
                     vote_data[vote_key]["link_message_id"] = sent_main.id
                     vote_data[vote_key]["link_channel_id"] = sent_main.channel.id
-
                     await save_vote_state(group, vote_data)
-
             except Exception as e:
-                logger.exception("Failed to save main link data, continuing GP flow: %s", e)
+                logger.exception("Failed to save main link data: %s", e)
 
-        # =========================
-        # 2. ENVÍO COMPLETO A CANAL DE REGISTRO
-        # =========================
+        # =========================================================
+        # 6. REGISTRO EN EL CANAL DE AUDITORÍA (LOGS)
+        # =========================================================
         if LOG_CHANNEL_ID:
-            log_channel = client.get_channel(LOG_CHANNEL_ID)
-            if log_channel is None:
-                try:
-                    log_channel = await client.fetch_channel(LOG_CHANNEL_ID)
-                except Exception as e:
-                    logger.exception("No se pudo obtener el canal log: %s", e)
-                    log_channel = None
-
-            if log_channel is not None:
-                log_summary = build_log_summary(
-                    result["heartbeat_meta"],
-                    result["pack_label"],
-                    result.get("debug_lines", [])
-                )
-
-                original_message_files = await collect_message_attachments(message)
+            log_channel = client.get_channel(LOG_CHANNEL_ID) or await client.fetch_channel(LOG_CHANNEL_ID)
+            if log_channel:
+                log_summary = f"**[MANTENIMIENTO] God Pack Registrado Directamente**\nGrupo: {group}\nUser: {owner_info.get('mention')}\nFriend ID: {friend_id}"
                 original_text = message.content or "(sin texto)"
-
-                sent_original = await log_channel.send(
-                    content=f"**Mensaje original:**\n```{original_text[:1800]}```",
-                    files=original_message_files if original_message_files else None
-                )
-
-                log_files = []
-
-                if result.get("direct_passthrough", False):
-                    passthrough_note = (
-                        f"{log_summary}\n"
-                        f"**Direct passthrough:** first attachment matched "
-                        f"exact size {DIRECT_GP_WIDTH}x{DIRECT_GP_HEIGHT}, so HD detection was skipped."
-                    )
-
-                    sent_log = await log_channel.send(
-                        content=passthrough_note
-                    )
-                else:
-                    if result.get("overlay_path"):
-                        log_files.append(
-                            discord.File(str(result["overlay_path"]), filename="box_overlay.png")
-                        )
-
-                    if result.get("debug_path"):
-                        log_files.append(
-                            discord.File(str(result["debug_path"]), filename="gp_debug.png")
-                        )
-
-                    sent_log = await log_channel.send(
-                        content=log_summary,
-                        files=log_files if log_files else None
-                    )
                 
-
+                sent_original = await log_channel.send(content=f"**Mensaje original:**\n```{original_text[:1800]}```")
+                sent_log = await log_channel.send(content=log_summary, file=discord.File(str(original_gp_image_path), filename="mantenimiento.png"))
+                
                 asyncio.create_task(delete_message_later(sent_original, 172800))
                 asyncio.create_task(delete_message_later(sent_log, 172800))
 
-        # =========================
-        # 3. BORRAR MENSAJE ORIGINAL
-        # =========================
+        # =========================================================
+        # 7. BORRADO DEL MENSAJE ORIGINAL
+        # =========================================================
         try:
             await message.delete()
         except Exception as e:
             logger.warning("No se pudo borrar el mensaje original: %s", e)
+
     except Exception as e:
-        logger.exception("on_message: %s", e)
+        logger.exception("Error general en on_message: %s", e)
 
 # =========================================================
 # MAIN
