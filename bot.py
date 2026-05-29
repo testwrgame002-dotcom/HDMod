@@ -1958,8 +1958,14 @@ async def on_message(message: discord.Message):
         )
 
 
-        if is_valid_gp:
-            logger.info("Valid GP confirmed. Trying to add VIP ID: %s | group=%s", friend_id, group)
+# CAMBIO 1: Permitir agregar a la lista VIP tanto si es un GP válido por CV2/Passthrough 
+        # O si el bot está procesando en modo mantenimiento.
+        if is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE:
+            if MAINTENANCE_USE_ORIGINAL_IMAGE and not is_valid_gp:
+                logger.info("Modo mantenimiento activo: Forzando registro de VIP ID para imagen normal: %s | group=%s", friend_id, group)
+            else:
+                logger.info("Valid GP confirmed. Trying to add VIP ID: %s | group=%s", friend_id, group)
+                
             if friend_id:
                 try:
                     await add_vip_id(friend_id, group)
