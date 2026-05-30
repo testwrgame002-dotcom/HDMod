@@ -107,7 +107,7 @@ MAINTENANCE_USE_ORIGINAL_IMAGE = False
 MIN_TWO_STAR_BY_GROUP = {
     "Trainer": 1,
     "Gym_Leader": 1,
-    "Elite_Four": 1,
+    "Elite_Four": 2,
 }
 CHANNEL_GROUP_MAP = {
    # 1486277594629275770: "Elite_Four",
@@ -1094,7 +1094,7 @@ async def cleanup_expired_vips(group: str):
             return
 
         now_ts = int(datetime.now(timezone.utc).timestamp())
-        expire_seconds = 26 * 60 * 60
+        expire_seconds = 36 * 60 * 60
 
         items = zip(vip_data[0::2], vip_data[1::2])
 
