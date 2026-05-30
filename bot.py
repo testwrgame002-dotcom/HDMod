@@ -516,7 +516,8 @@ async def download_pil_image(attachment: discord.Attachment) -> Image.Image:
     return Image.open(io.BytesIO(data)).convert("RGBA")
 
 def is_direct_gp_passthrough_image(img: Image.Image) -> bool:
-    return img.size == (DIRECT_GP_WIDTH, DIRECT_GP_HEIGHT)
+    # Deja pasar si es exactamente 1270x300 O si es exactamente 1270x1270
+    return img.size == (1270, 300) or img.size == (1270, 1270)
 
 
 def build_pack_label_from_meta(meta: dict) -> str:
