@@ -977,7 +977,8 @@ async def get_rival_duo_by_id(duo_id: str):
 
 async def resolve_rival_duo_owner_by_game_id(game_id: str):
     try:
-        rival_duos = await load_rival_duos()
+        # CAMBIA ESTA LÍNEA para leer el Hash de Redis directamente
+        rival_duos = await redis_hgetall_json(rival_duos_key())
 
         for duo_id, duo in rival_duos.items():
             online_users = duo.get("onlineUsers") or {}
