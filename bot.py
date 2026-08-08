@@ -1852,27 +1852,68 @@ async def on_message(message: discord.Message):
             PROCESSED_MESSAGES.clear()
 
         # result = await asyncio.to_thread(process_gp_image, source_img, message.id, message.content)
+        # =====================================================
+        # PROCESAMIENTO DE IMAGEN
+        # =====================================================
 
-        if is_direct_gp_passthrough_image(source_img):
+        if MAINTENANCE_USE_ORIGINAL_IMAGE:
+            # =================================================
+            # MODO MANTENIMIENTO
+            # NO HACER DETECCIÓN HD
+            # =================================================
             logger.info(
-                "Direct passthrough image detected for message_id=%s with size=%s. Skipping HD detection.",
-                message.id,
-                source_img.size
+                "🔧 MODO MANTENIMIENTO ACTIVO - "
+                "se omite completamente la detección HD para message_id=%s",
+                message.id
             )
 
-            result = process_direct_gp_passthrough(
-                message.id,
-                message.content,
-                original_gp_image_path
-            )
+            maintenance_meta = parse_heartbeat_metadata(message.content)
+            maintenance_pack_label = build_pack_label_from_meta(maintenance_meta)
+
+            result = {
+                "two_star_count": 0,
+                "found_count": 0,
+                "overlay_path": None,
+                "debug_path": None,
+                "reply_text": "Modo mantenimiento: detección HD omitida.",
+                "debug_lines": [
+                    "🔧 MODO MANTENIMIENTO",
+                    "Detección HD omitida.",
+                    "Se utilizará la imagen original del webhook."
+                ],
+                "files": [],
+                "pack_label": maintenance_pack_label,
+                "heartbeat_meta": maintenance_meta,
+                "final_image_path": original_gp_image_path,
+                "has_invalid": False,
+                "direct_passthrough": False,
+                "maintenance_mode": True,
+            }
 
         else:
-            result = await asyncio.to_thread(
-                process_gp_image,
-                source_img,
-                message.id,
-                message.content
-            )
+            # =================================================
+            # MODO NORMAL
+            # =================================================
+            if is_direct_gp_passthrough_image(source_img):
+                logger.info(
+                    "Direct passthrough image detected for message_id=%s with size=%s. Skipping HD detection.",
+                    message.id,
+                    source_img.size
+                )
+
+                result = process_direct_gp_passthrough(
+                    message.id,
+                    message.content,
+                    original_gp_image_path
+                )
+
+            else:
+                result = await asyncio.to_thread(
+                    process_gp_image,
+                    source_img,
+                    message.id,
+                    message.content
+                )
 
         group = get_group_from_channel(message.channel.id)
 
