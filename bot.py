@@ -1957,8 +1957,10 @@ async def on_message(message: discord.Message):
         min_two_star = MIN_TWO_STAR_BY_GROUP.get(group, 0)
 
 
+
         is_valid_gp = (
-            result.get("direct_passthrough", False)
+            MAINTENANCE_USE_ORIGINAL_IMAGE
+            or result.get("direct_passthrough", False)
             or (
                 not result.get("has_invalid", False)
                 and result.get("found_count", 0) == 5
@@ -1966,7 +1968,18 @@ async def on_message(message: discord.Message):
             )
         )
 
-
+        logger.info(
+            "GP VALIDATION | group=%s | is_valid_gp=%s | maintenance=%s | "
+            "direct=%s | found=%s | two_star=%s | invalid=%s | friend_id=%s",
+            group,
+            is_valid_gp,
+            MAINTENANCE_USE_ORIGINAL_IMAGE,
+            result.get("direct_passthrough", False),
+            result.get("found_count", 0),
+            result.get("two_star_count", 0),
+            result.get("has_invalid", False),
+            friend_id,
+        )
         if is_valid_gp:
             logger.info("Valid GP confirmed. Trying to add VIP ID: %s | group=%s", friend_id, group)
             if friend_id:
