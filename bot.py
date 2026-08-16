@@ -1577,16 +1577,37 @@ async def load_vote_state(group: str) -> dict:
     if group not in GROUP_CONFIG:
         return {}
 
-    return await redis_get_json(vote_state_key(group), {})
+    data = await redis_get_json(vote_state_key(group), {})
+
+    cutoff = time.time() - (72 * 60 * 60)
+
+    data = {
+        key: value
+        for key, value in data.items()
+        if value.get("created_at", time.time()) >= cutoff
+    }
+
+    return data
 
 
 async def save_vote_state(group: str, data: dict) -> None:
     if group not in GROUP_CONFIG:
         return
 
-    await redis_set_json(vote_state_key(group), data)
+    # Guardar solamente los estados individualmente.
+    for vote_key, state in data.items():
+        await redis_hset_json(vote_state_key(group), vote_key, state)
 
+def clean_old_vote_states(data):
+    now = time.time()
+    cutoff = now - (72 * 60 * 60)
 
+    return {
+        key: value
+        for key, value in data.items()
+        if value.get("created_at", now) >= cutoff
+    }
+    
 async def update_gp_thread_status(thread_id: int, status: str):
     try:
         thread = client.get_channel(thread_id)
@@ -2059,6 +2080,7 @@ async def on_message(message: discord.Message):
 
                     if vote_key not in vote_data:
                         vote_data[vote_key] = {
+                            "created_at": time.time(),
                             "group": group,
                             "owner_discord_id": owner_info.get("discord_id"),
                             "friend_id": friend_id,
