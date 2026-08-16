@@ -1573,18 +1573,30 @@ def process_gp_image(source_img: Image.Image, message_id: int, heartbeat_text: s
 # VOTOS GP
 # =========================================================
 
-async def load_vote_state(group: str) -> dict:
+
+
+
+async def load_single_vote_state(group: str, vote_key: str):
     if group not in GROUP_CONFIG:
-        return {}
+        return None
 
-    return await redis_get_json(vote_state_key(group), {})
+    return await redis_hget_json(
+        vote_state_key(group),
+        str(vote_key),
+        None
+    )
 
 
-async def save_vote_state(group: str, data: dict) -> None:
+async def save_single_vote_state(group: str, vote_key: str, state: dict):
     if group not in GROUP_CONFIG:
         return
 
-    await redis_set_json(vote_state_key(group), data)
+    await redis_hset_json(
+        vote_state_key(group),
+        str(vote_key),
+        state
+    )
+
 
 
 async def update_gp_thread_status(thread_id: int, status: str):
@@ -1641,97 +1653,208 @@ async def update_main_link_button(state: dict, status: str, meta: dict, pack_lab
     except Exception as e:
         logger.warning("No se pudo actualizar botón link: %s", e)
         
+
 class GPVoteView(discord.ui.View):
     def __init__(self, vote_key: str, group: str):
         super().__init__(timeout=None)
-        self.vote_key = vote_key
+
+        self.vote_key = str(vote_key)
         self.group = group
 
-    @discord.ui.button(label="🟢 Alive (0)", style=discord.ButtonStyle.success, custom_id="gp_alive")
-    async def alive_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_vote(interaction, "alive")
-
-    @discord.ui.button(label="🔴 Dead (0)", style=discord.ButtonStyle.danger, custom_id="gp_dead")
-    async def dead_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_vote(interaction, "dead")
-
-    async def handle_vote(self, interaction: discord.Interaction, vote_type: str):
-        data = await load_vote_state(self.group)
-        state = data.get(self.vote_key)
-
-        if not state:
-            await interaction.response.send_message("No vote state found.", ephemeral=True)
-            return
-
-        user_id = str(interaction.user.id)
-
-        if user_id in state["alive_users"] or user_id in state["dead_users"]:
-            await interaction.response.send_message("You already voted.", ephemeral=True)
-            return
-
-        if vote_type == "alive":
-            state["alive_users"].append(user_id)
-        else:
-            state["dead_users"].append(user_id)
-
-        alive_count = len(state["alive_users"])
-        dead_count = len(state["dead_users"])
-
-        status = state.get("status", "none")
-
-        if alive_count >= 1:
-            status = "alive"
-        elif dead_count >= 4:
-            status = "dead"
-
-        state["status"] = status
-
-        if status == "alive" and not state.get("counted_alive", False):
-            await update_stats_safe(self.group, self._increment_alive)
-            state["counted_alive"] = True
-
-        data[self.vote_key] = state
-        await save_vote_state(self.group, data)
-
-        for child in self.children:
-            if child.custom_id == "gp_alive":
-                child.label = f"🟢 Alive ({alive_count})"
-            elif child.custom_id == "gp_dead":
-                child.label = f"🔴 Dead ({dead_count})"
-
-        if status in ("alive", "dead"):
-            await update_gp_thread_status(int(self.vote_key), status)
-
-            await update_main_link_button(
-                state,
-                status,
-                state.get("meta", {}),
-                state.get("pack_label", "")
-            )
-
-            for child in self.children:
-                child.disabled = True
-
-        voter_name = interaction.user.display_name
-
-        if vote_type == "alive":
-            vote_text = f"{voter_name} voted Alive."
-        else:
-            vote_text = f"{voter_name} voted Dead."
-
-        await interaction.response.send_message(
-            vote_text,
-            ephemeral=False
+        self.alive_btn = discord.ui.Button(
+            label="🟢 Alive (0)",
+            style=discord.ButtonStyle.success,
+            custom_id=f"gp_alive:{self.vote_key}"
         )
 
-        try:
-            await interaction.message.edit(view=self)
-        except Exception as e:
-            logger.warning("Failed to update vote buttons after vote: %s", e)
+        self.dead_btn = discord.ui.Button(
+            label="🔴 Dead (0)",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"gp_dead:{self.vote_key}"
+        )
 
-    async def _increment_alive(self, stats: dict) -> dict:
+        self.alive_btn.callback = self.alive_callback
+        self.dead_btn.callback = self.dead_callback
+
+        self.add_item(self.alive_btn)
+        self.add_item(self.dead_btn)
+
+    async def alive_callback(self, interaction: discord.Interaction):
+        await self.handle_vote(interaction, "alive")
+
+    async def dead_callback(self, interaction: discord.Interaction):
+        await self.handle_vote(interaction, "dead")
+
+    async def handle_vote(
+        self,
+        interaction: discord.Interaction,
+        vote_type: str
+    ):
+        try:
+            state = await load_single_vote_state(
+                self.group,
+                self.vote_key
+            )
+
+            if not state:
+                await interaction.response.send_message(
+                    "❌ No se encontró el estado de esta votación.",
+                    ephemeral=True
+                )
+                return
+
+            user_id = str(interaction.user.id)
+
+            alive_users = state.setdefault("alive_users", [])
+            dead_users = state.setdefault("dead_users", [])
+
+            if (
+                user_id in alive_users
+                or user_id in dead_users
+            ):
+                await interaction.response.send_message(
+                    "⚠️ Ya votaste en este GP.",
+                    ephemeral=True
+                )
+                return
+
+            if state.get("status") in ("alive", "dead"):
+                await interaction.response.send_message(
+                    "⚠️ Esta votación ya terminó.",
+                    ephemeral=True
+                )
+                return
+
+            if vote_type == "alive":
+                alive_users.append(user_id)
+            else:
+                dead_users.append(user_id)
+
+            alive_count = len(alive_users)
+            dead_count = len(dead_users)
+
+            status = "none"
+
+            # 1 Alive = GP vivo
+            if alive_count >= 1:
+                status = "alive"
+
+            # 4 Dead = GP muerto
+            elif dead_count >= 4:
+                status = "dead"
+
+            state["status"] = status
+
+            # ==========================================
+            # CONTAR GP VIVO SOLO UNA VEZ
+            # ==========================================
+
+            if (
+                status == "alive"
+                and not state.get("counted_alive", False)
+            ):
+                await update_stats_safe(
+                    self.group,
+                    self._increment_alive
+                )
+
+                state["counted_alive"] = True
+
+            # ==========================================
+            # GUARDAR ESTADO
+            # ==========================================
+
+            await save_single_vote_state(
+                self.group,
+                self.vote_key,
+                state
+            )
+
+            # ==========================================
+            # ACTUALIZAR BOTONES
+            # ==========================================
+
+            self.alive_btn.label = (
+                f"🟢 Alive ({alive_count})"
+            )
+
+            self.dead_btn.label = (
+                f"🔴 Dead ({dead_count})"
+            )
+
+            # ==========================================
+            # GP TERMINADO
+            # ==========================================
+
+            if status in ("alive", "dead"):
+
+                self.alive_btn.disabled = True
+                self.dead_btn.disabled = True
+
+                await update_gp_thread_status(
+                    int(self.vote_key),
+                    status
+                )
+
+                await update_main_link_button(
+                    state,
+                    status,
+                    state.get("meta", {}),
+                    state.get("pack_label", "")
+                )
+
+            # ==========================================
+            # RESPUESTA
+            # ==========================================
+
+            voter_name = interaction.user.display_name
+
+            if vote_type == "alive":
+                vote_text = (
+                    f"🟢 **{voter_name}** votó Alive."
+                )
+            else:
+                vote_text = (
+                    f"🔴 **{voter_name}** votó Dead."
+                )
+
+            await interaction.response.send_message(
+                vote_text,
+                ephemeral=False
+            )
+
+            # Actualizar botones del mensaje
+            try:
+                await interaction.message.edit(
+                    view=self
+                )
+            except Exception as e:
+                logger.warning(
+                    "No se pudo actualizar botones: %s",
+                    e
+                )
+
+        except Exception as e:
+            logger.exception(
+                "❌ Error procesando voto | group=%s | vote_key=%s",
+                self.group,
+                self.vote_key
+            )
+
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    "❌ Ocurrió un error procesando tu voto.",
+                    ephemeral=True
+                )
+
+    async def _increment_alive(
+        self,
+        stats: dict
+    ) -> dict:
+
         stats["totalAlive"] += 1
         stats["daily"]["alive"] += 1
+
         return stats
 # =========================================================
 # BOT DISCORD
@@ -1748,51 +1871,73 @@ async def restore_persistent_views():
     restored = 0
 
     for group in GROUP_CONFIG.keys():
+
         try:
-            vote_data = await load_vote_state(group)
+            vote_data = await redis_hgetall_json(
+                vote_state_key(group)
+            )
 
             for vote_key, state in vote_data.items():
+
                 try:
+                    vote_key = str(vote_key)
+
                     view = GPVoteView(
-                        vote_key=str(vote_key),
+                        vote_key=vote_key,
                         group=group
                     )
 
-                    # restaurar labels actuales
-                    alive_count = len(state.get("alive_users", []))
-                    dead_count = len(state.get("dead_users", []))
+                    alive_count = len(
+                        state.get("alive_users", [])
+                    )
 
-                    for child in view.children:
-                        if child.custom_id == "gp_alive":
-                            child.label = f"🟢 Alive ({alive_count})"
+                    dead_count = len(
+                        state.get("dead_users", [])
+                    )
 
-                        elif child.custom_id == "gp_dead":
-                            child.label = f"🔴 Dead ({dead_count})"
+                    view.alive_btn.label = (
+                        f"🟢 Alive ({alive_count})"
+                    )
 
-                        # si ya terminó la votación, deshabilitar
-                        if state.get("status") in ("alive", "dead"):
-                            child.disabled = True
+                    view.dead_btn.label = (
+                        f"🔴 Dead ({dead_count})"
+                    )
+
+                    if state.get("status") in (
+                        "alive",
+                        "dead"
+                    ):
+                        view.alive_btn.disabled = True
+                        view.dead_btn.disabled = True
 
                     client.add_view(view)
 
                     restored += 1
 
-                except Exception as e:
-                    logger.exception(
-                        "❌ Error restaurando view %s (%s): %s",
-                        vote_key,
+                    logger.info(
+                        "✅ View restaurada | group=%s | vote_key=%s | status=%s",
                         group,
-                        e
+                        vote_key,
+                        state.get("status")
                     )
 
-        except Exception as e:
+                except Exception:
+                    logger.exception(
+                        "❌ Error restaurando view %s (%s)",
+                        vote_key,
+                        group
+                    )
+
+        except Exception:
             logger.exception(
-                "❌ Error cargando vote state %s: %s",
-                group,
-                e
+                "❌ Error cargando vote states de %s",
+                group
             )
 
-    logger.info("✅ Views restauradas: %s", restored)
+    logger.info(
+        "✅ Views restauradas: %s",
+        restored
+    )
 
 @client.event
 async def on_ready():
@@ -2054,10 +2199,10 @@ async def on_message(message: discord.Message):
                 vote_data_saved = False
 
                 try:
-                    vote_data = await load_vote_state(group)
-
-                    if vote_key not in vote_data:
-                        vote_data[vote_key] = {
+                    existing_state = await load_single_vote_state(group, vote_key)
+    
+                    if existing_state is None:
+                        state = {
                             "group": group,
                             "owner_discord_id": owner_info.get("discord_id"),
                             "friend_id": friend_id,
@@ -2072,8 +2217,53 @@ async def on_message(message: discord.Message):
                             "pack_label": result["pack_label"],
                         }
 
-                    await save_vote_state(group, vote_data)
-                    vote_data_saved = True
+                        await save_single_vote_state(
+                            group,
+                            vote_key,
+                            state
+                        )
+
+        # Verificar inmediatamente que Redis realmente lo guardó
+                        verify_state = await load_single_vote_state(
+                            group,
+                            vote_key
+                        )
+
+                        if verify_state is not None:
+                            vote_data_saved = True
+                            logger.info(
+                                "✅ Vote state guardado correctamente | group=%s | vote_key=%s",
+                                group,
+                                vote_key
+                            )
+                        else:
+                            logger.error(
+                                "❌ Redis no devolvió el vote state después de guardarlo | group=%s | vote_key=%s",
+                                group,
+                                vote_key
+                            )
+
+                    else:
+                        vote_data_saved = True
+                        logger.info(
+                            "✅ Vote state ya existía | group=%s | vote_key=%s",
+                            group,
+                            vote_key
+                        )
+
+                except Exception as e:
+                    vote_data_saved = False
+
+                    logger.exception(
+                        "❌ ERROR GUARDANDO VOTE STATE | group=%s | vote_key=%s | error=%s",
+                        group,
+                        vote_key,
+                        e
+                    )
+
+
+
+                
 
                 except Exception as e:
                     logger.exception("Failed to save vote state: %s", e)
@@ -2140,13 +2330,35 @@ async def on_message(message: discord.Message):
                 post_thread = post_data["thread"]
                 vote_key = str(post_thread.id)
 
-                vote_data = await load_vote_state(group)
 
-                if vote_key in vote_data:
-                    vote_data[vote_key]["link_message_id"] = sent_main.id
-                    vote_data[vote_key]["link_channel_id"] = sent_main.channel.id
 
-                    await save_vote_state(group, vote_data)
+
+
+                state = await load_single_vote_state(
+                    group,
+                    vote_key
+                )
+
+                if state:
+                    state["link_message_id"] = sent_main.id
+                    state["link_channel_id"] = sent_main.channel.id
+
+                    await save_single_vote_state(
+                        group,
+                        vote_key,
+                        state
+                    )
+
+    logger.info(
+        "✅ Link message guardado | vote_key=%s | message_id=%s",
+        vote_key,
+        sent_main.id
+    )
+
+
+
+
+            
 
             except Exception as e:
                 logger.exception("Failed to save main link data, continuing GP flow: %s", e)
