@@ -1578,7 +1578,8 @@ async def load_vote_state(group: str) -> dict:
     if group not in GROUP_CONFIG:
         return {}
 
-    data = await redis_get_json(vote_state_key(group), {})
+    data = await redis_hgetall_json(vote_state_key(group))
+
 
     cutoff = time.time() - (72 * 60 * 60)
 
@@ -2078,6 +2079,7 @@ async def on_message(message: discord.Message):
 
                 try:
                     vote_data = await load_vote_state(group)
+                    logger.info("Vote state loaded: %d entries for %s", len(vote_data), group)
 
                     if vote_key not in vote_data:
                         vote_data[vote_key] = {
@@ -2095,6 +2097,14 @@ async def on_message(message: discord.Message):
                             "meta": result["heartbeat_meta"],
                             "pack_label": result["pack_label"],
                         }
+
+                    cutoff = time.time() - (72 * 60 * 60)
+
+                    vote_data = {
+                        key: value
+                        for key, value in vote_data.items()
+                        if value.get("created_at", 0) >= cutoff
+                    }
 
                     await save_vote_state(group, vote_data)
                     vote_data_saved = True
