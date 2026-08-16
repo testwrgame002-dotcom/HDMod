@@ -2220,7 +2220,7 @@ async def on_message(message: discord.Message):
         except Exception as e:
             logger.warning("No se pudo borrar el mensaje original: %s", e)
     except Exception as e:
-        logger.exception("on_message: %s", e)
+        logger.exception("🔥🔥🔥 ERROR REAL EN on_message: %s", e)
 
 # =========================================================
 # MAIN
