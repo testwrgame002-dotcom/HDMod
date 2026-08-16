@@ -1642,10 +1642,11 @@ async def update_main_link_button(state: dict, status: str, meta: dict, pack_lab
         logger.warning("No se pudo actualizar botón link: %s", e)
         
 class GPVoteView(discord.ui.View):
-    def __init__(self, vote_key: str, group: str):
+    def __init__(self, vote_key: str, group: str, fallback_state: dict = None):
         super().__init__(timeout=None)
         self.vote_key = vote_key
         self.group = group
+        self.fallback_state = fallback_state or {}
 
     @discord.ui.button(label="🟢 Alive (0)", style=discord.ButtonStyle.success, custom_id="gp_alive")
     async def alive_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -2089,13 +2090,7 @@ async def on_message(message: discord.Message):
                         )
                     except Exception as e:
                         logger.exception("Failed to send forum info panel with buttons: %s", e)
-                else:
-                    try:
-                        await post_thread.send(
-                            content=info_panel + "\n\nVoting disabled (state not saved)."
-                        )
-                    except Exception as e:
-                        logger.exception("Failed to send forum info panel without buttons: %s", e)
+
 ###########
         view = ForumLinkView(
             post_url,
