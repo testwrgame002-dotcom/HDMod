@@ -2090,6 +2090,13 @@ async def on_message(message: discord.Message):
                         )
                     except Exception as e:
                         logger.exception("Failed to send forum info panel with buttons: %s", e)
+                else:
+                    try:
+                        await post_thread.send(
+                            content=info_panel + "\n\nVoting disabled (state not saved)."
+                        )
+                    except Exception as e:
+                        logger.exception("Failed to send forum info panel without buttons: %s", e)
 
 ###########
         view = ForumLinkView(
