@@ -1030,6 +1030,12 @@ async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
 
         game_id = str(game_id).strip()
 
+        logger.info(
+            "RIVAL DUO DEBUG | buscando game_id=%s | duos=%s",
+            game_id,
+            len(rival_duos)
+        )
+
         for duo_id, duo in rival_duos.items():
             if not duo:
                 continue
@@ -1038,15 +1044,27 @@ async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
             online_users = duo.get("onlineUsers") or {}
             last_heartbeat = duo.get("lastHeartbeatAt") or {}
 
-            # ---------------------------------------------
-            # Primero encontrar el DUO de este game_id
-            # ---------------------------------------------
+            logger.info(
+                "RIVAL DUO DEBUG | duo=%s | members=%s | onlineUsers=%s | lastHeartbeatAt=%s",
+                duo_id,
+                members,
+                online_users,
+                last_heartbeat
+            )
+
             belongs_to_duo = False
 
             for discord_id, member_data in members.items():
                 member_game_id = str(
                     member_data.get("gameId") or ""
                 ).strip()
+
+                logger.info(
+                    "RIVAL DUO DEBUG | miembro=%s | game_id=%s | buscado=%s",
+                    discord_id,
+                    member_game_id,
+                    game_id
+                )
 
                 if member_game_id == game_id:
                     belongs_to_duo = True
@@ -1055,28 +1073,62 @@ async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
             if not belongs_to_duo:
                 continue
 
-            # ---------------------------------------------
-            # Ya encontramos el Duo.
-            # Ahora SOLO revisar sus miembros.
-            # ---------------------------------------------
-            for discord_id in members.keys():
+            logger.info(
+                "RIVAL DUO DEBUG | ENCONTRADO DUO=%s PARA game_id=%s",
+                duo_id,
+                game_id
+            )
 
+            for discord_id in members.keys():
                 discord_id = str(discord_id)
 
-                if online_users.get(discord_id) is not True:
-                    continue
-
+                online_value = online_users.get(discord_id)
                 last = last_heartbeat.get(discord_id)
 
+                logger.info(
+                    "RIVAL DUO DEBUG | miembro=%s | online=%r | heartbeat=%r",
+                    discord_id,
+                    online_value,
+                    last
+                )
+
+                if online_value is not True:
+                    logger.info(
+                        "RIVAL DUO DEBUG | DESCARTADO %s: online != True",
+                        discord_id
+                    )
+                    continue
+
                 if not last:
+                    logger.info(
+                        "RIVAL DUO DEBUG | DESCARTADO %s: sin heartbeat",
+                        discord_id
+                    )
                     continue
 
                 try:
                     last = float(last)
                 except (TypeError, ValueError):
+                    logger.info(
+                        "RIVAL DUO DEBUG | DESCARTADO %s: heartbeat inválido=%r",
+                        discord_id,
+                        last
+                    )
                     continue
 
-                if time.time() * 1000 - last >= 45 * 60 * 1000:
+                age = time.time() * 1000 - last
+
+                logger.info(
+                    "RIVAL DUO DEBUG | miembro=%s | heartbeat_age_ms=%s",
+                    discord_id,
+                    age
+                )
+
+                if age >= 45 * 60 * 1000:
+                    logger.info(
+                        "RIVAL DUO DEBUG | DESCARTADO %s: heartbeat viejo",
+                        discord_id
+                    )
                     continue
 
                 mention = f"<@{discord_id}>"
@@ -1085,6 +1137,12 @@ async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
                     mentions.append(mention)
 
             break
+
+        logger.info(
+            "RIVAL DUO DEBUG | RESULTADO FINAL game_id=%s -> %s",
+            game_id,
+            mentions
+        )
 
         return mentions
 
