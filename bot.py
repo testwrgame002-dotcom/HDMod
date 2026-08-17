@@ -2215,7 +2215,7 @@ async def on_message(message: discord.Message):
                         logger.exception(
                             "Failed to send forum info panel without buttons: %s",
                             e
-                        ))
+                        )
 
 ###########
         view = ForumLinkView(
