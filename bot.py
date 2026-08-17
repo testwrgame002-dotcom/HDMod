@@ -2078,6 +2078,7 @@ async def on_message(message: discord.Message):
         should_create_post = is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE
 
         post_image_path = None
+
         if should_create_post:
             if MAINTENANCE_USE_ORIGINAL_IMAGE:
                 post_image_path = original_gp_image_path
@@ -2098,23 +2099,7 @@ async def on_message(message: discord.Message):
                 content="‎"
             )
 
-          #  post_body = build_forum_post_text(
-           #     result["heartbeat_meta"],
-            #    result["pack_label"],
-             #   online_mentions
-            #)     
-
-            post_data = await create_forum_post_with_image(
-                client,
-                group,
-                post_title,
-                post_image_path,
-                content="‎"
-            )
-
-
-
-               if post_data:
+        if post_data:
             post_thread = post_data["thread"]
             post_url = post_data["jump_url"]
 
