@@ -1025,8 +1025,8 @@ async def get_online_rival_duo_mentions():
     Devuelve las menciones de TODOS los miembros de Rival Duo
     que actualmente están marcados como online.
 
-    Esta función NO depende de Elite_Four ni de Gym_Leader.
-    Por eso los Rival Duo pueden ser mencionados en ambos grupos.
+    Funciona independientemente del grupo:
+    Elite_Four, Gym_Leader, etc.
     """
     mentions = []
 
@@ -1194,6 +1194,7 @@ async def get_online_mentions(group: str) -> List[str]:
 
         mentions = []
 
+        # Usuarios normales del grupo
         for discord_id, user_info in users.items():
             main_id = str(user_info.get("main_id", "")).strip()
             sec_id = str(user_info.get("sec_id", "")).strip()
@@ -1201,11 +1202,12 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
+        # Rival Duo
+        duo_mentions = await get_online_rival_duo_mentions()
 
-            duo_mentions = await get_online_rival_duo_mentions()
-            for mention in duo_mentions:
-                if mention not in mentions:
-                    mentions.append(mention)
+        for mention in duo_mentions:
+            if mention not in mentions:
+                mentions.append(mention)
 
         return mentions
 
