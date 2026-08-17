@@ -2085,16 +2085,18 @@ async def on_message(message: discord.Message):
                 post_image_path = result["final_image_path"]
 
         if should_create_post and post_image_path is not None:
-            post_title = build_post_title(result["heartbeat_meta"], result["pack_label"])
-            online_mentions = await get_online_mentions(group)
-            online_mentions = await get_online_mentions(group)
+            post_title = build_post_title(
+                result["heartbeat_meta"],
+                result["pack_label"]
+            )
 
-            if group in ("Elite_Four", "Gym_Leader") and friend_id:
-                duo_mentions = await get_rival_duo_online_mentions_by_game_id(friend_id)
-
-                for mention in duo_mentions:
-                    if mention not in online_mentions:
-                        online_mentions.append(mention)
+            post_data = await create_forum_post_with_image(
+                client,
+                group,
+                post_title,
+                post_image_path,
+                content="‎"
+            )
 
           #  post_body = build_forum_post_text(
            #     result["heartbeat_meta"],
@@ -2112,7 +2114,7 @@ async def on_message(message: discord.Message):
 
 
 
-        if post_data:
+               if post_data:
             post_thread = post_data["thread"]
             post_url = post_data["jump_url"]
 
@@ -2120,9 +2122,31 @@ async def on_message(message: discord.Message):
                 online_mentions = []
 
                 try:
+                    # =====================================================
+                    # USUARIOS NORMALES ONLINE DEL GRUPO
+                    # =====================================================
                     online_mentions = await get_online_mentions(group)
+
+                    # =====================================================
+                    # RIVAL DUO
+                    # SOLO ELITE FOUR / GYM LEADER
+                    # SOLO EL DUO DEL GAME ID ACTUAL
+                    # SOLO MIEMBROS QUE ESTEN ONLINE
+                    # =====================================================
+                    if group in ("Elite_Four", "Gym_Leader") and friend_id:
+                        duo_mentions = await get_rival_duo_online_mentions_by_game_id(
+                            friend_id
+                        )
+
+                        for mention in duo_mentions:
+                            if mention not in online_mentions:
+                                online_mentions.append(mention)
+
                 except Exception as e:
-                    logger.exception("Failed to load online mentions: %s", e)
+                    logger.exception(
+                        "Failed to load online mentions: %s",
+                        e
+                    )
 
                 info_panel = build_forum_info_panel(
                     result["heartbeat_meta"],
@@ -2135,7 +2159,12 @@ async def on_message(message: discord.Message):
 
                 try:
                     vote_data = await load_vote_state(group)
-                    logger.info("Vote state loaded: %d entries for %s", len(vote_data), group)
+
+                    logger.info(
+                        "Vote state loaded: %d entries for %s",
+                        len(vote_data),
+                        group
+                    )
 
                     if vote_key not in vote_data:
                         vote_data[vote_key] = {
@@ -2166,10 +2195,16 @@ async def on_message(message: discord.Message):
                     vote_data_saved = True
 
                 except Exception as e:
-                    logger.exception("Failed to save vote state: %s", e)
+                    logger.exception(
+                        "Failed to save vote state: %s",
+                        e
+                    )
 
                 if vote_data_saved:
-                    vote_view = GPVoteView(vote_key=vote_key, group=group)
+                    vote_view = GPVoteView(
+                        vote_key=vote_key,
+                        group=group
+                    )
 
                     try:
                         await post_thread.send(
@@ -2177,15 +2212,25 @@ async def on_message(message: discord.Message):
                             view=vote_view,
                             allowed_mentions=discord.AllowedMentions(users=True)
                         )
+
                     except Exception as e:
-                        logger.exception("Failed to send forum info panel with buttons: %s", e)
+                        logger.exception(
+                            "Failed to send forum info panel with buttons: %s",
+                            e
+                        )
+
                 else:
                     try:
                         await post_thread.send(
-                            content=info_panel + "\n\nVoting disabled (state not saved)."
+                            content=info_panel
+                            + "\n\nVoting disabled (state not saved)."
                         )
+
                     except Exception as e:
-                        logger.exception("Failed to send forum info panel without buttons: %s", e)
+                        logger.exception(
+                            "Failed to send forum info panel without buttons: %s",
+                            e
+                        ))
 
 ###########
         view = ForumLinkView(
