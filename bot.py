@@ -1182,7 +1182,7 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
-        if group == "Elite_Four":
+        if group in ("Elite_Four", "Gym_Leader"):
             duo_mentions = await get_rival_duo_mentions_from_online_ids(online_ids)
 
             for mention in duo_mentions:
@@ -1953,7 +1953,7 @@ async def on_message(message: discord.Message):
         friend_id = result["heartbeat_meta"].get("game_id") or extract_friend_id(message.content)
         logger.info("Extracted VIP friend_id=%s from message_id=%s", friend_id, message.id)
 
-        if group == "Elite_Four" and friend_id:
+        if group in ("Elite_Four", "Gym_Leader") and friend_id:
             rival_owner = await resolve_rival_duo_owner_by_game_id(friend_id)
 
             if rival_owner:
