@@ -1020,24 +1020,15 @@ async def resolve_rival_duo_owner_by_game_id(game_id: str):
         print(f"❌ Error resolving rival duo owner: {e}")
         return None
 
-async def get_online_rival_duo_mentions():
-    """
-    Devuelve SOLO los miembros de Rival Duo que están realmente online.
-
-    Se considera online únicamente si:
-    - onlineUsers[discord_id] es exactamente True
-    - y su lastHeartbeatAt sigue dentro del tiempo permitido.
-
-    Esto permite mencionar al miembro online aunque su compañero esté offline.
-    """
-    mentions = []
+async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
+    if not game_id:
+        return []
 
     try:
         rival_duos = await redis_hgetall_json(rival_duos_key())
-        now = time.time() * 1000
+        mentions = []
 
-        # Mismo timeout usado por el sistema Rival Duo
-        HEARTBEAT_TIMEOUT_MS = 45 * 60 * 1000
+        game_id = str(game_id).strip()
 
         for duo_id, duo in rival_duos.items():
             if not duo:
@@ -1047,19 +1038,34 @@ async def get_online_rival_duo_mentions():
             online_users = duo.get("onlineUsers") or {}
             last_heartbeat = duo.get("lastHeartbeatAt") or {}
 
+            # ---------------------------------------------
+            # Primero encontrar el DUO de este game_id
+            # ---------------------------------------------
+            belongs_to_duo = False
+
             for discord_id, member_data in members.items():
+                member_game_id = str(
+                    member_data.get("gameId") or ""
+                ).strip()
+
+                if member_game_id == game_id:
+                    belongs_to_duo = True
+                    break
+
+            if not belongs_to_duo:
+                continue
+
+            # ---------------------------------------------
+            # Ya encontramos el Duo.
+            # Ahora SOLO revisar sus miembros.
+            # ---------------------------------------------
+            for discord_id in members.keys():
 
                 discord_id = str(discord_id)
 
-                # -------------------------------------------------
-                # 1. DEBE ESTAR MARCADO EXPLÍCITAMENTE COMO TRUE
-                # -------------------------------------------------
                 if online_users.get(discord_id) is not True:
                     continue
 
-                # -------------------------------------------------
-                # 2. COMPROBAR QUE SU HEARTBEAT SIGUE VIGENTE
-                # -------------------------------------------------
                 last = last_heartbeat.get(discord_id)
 
                 if not last:
@@ -1070,22 +1076,22 @@ async def get_online_rival_duo_mentions():
                 except (TypeError, ValueError):
                     continue
 
-                if now - last >= HEARTBEAT_TIMEOUT_MS:
+                if time.time() * 1000 - last >= 45 * 60 * 1000:
                     continue
 
-                # -------------------------------------------------
-                # 3. MENCIONAR SOLO A ESTE MIEMBRO
-                # -------------------------------------------------
                 mention = f"<@{discord_id}>"
 
                 if mention not in mentions:
                     mentions.append(mention)
 
+            break
+
         return mentions
 
     except Exception as e:
         logger.exception(
-            "Error obteniendo menciones de Rival Duo online: %s",
+            "Error obteniendo miembros online del Rival Duo game_id=%s: %s",
+            game_id,
             e
         )
         return []
@@ -1225,7 +1231,6 @@ async def get_online_mentions(group: str) -> List[str]:
 
         mentions = []
 
-        # Usuarios normales del grupo
         for discord_id, user_info in users.items():
             main_id = str(user_info.get("main_id", "")).strip()
             sec_id = str(user_info.get("sec_id", "")).strip()
@@ -1233,20 +1238,11 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
-        # Rival Duo
-        if group in ("Elite_Four", "Gym_Leader"):
-            duo_mentions = await get_online_rival_duo_mentions()
-
-            for mention in duo_mentions:
-                if mention not in mentions:
-                    mentions.append(mention)
-
         return mentions
 
     except Exception as e:
         logger.exception("get_online_mentions Redis error: %s", e)
         return []
-
 def get_utc6_date_string() -> str:
     now_utc = datetime.now(timezone.utc)
     utc6 = now_utc - timedelta(hours=6)
@@ -2006,7 +2002,7 @@ async def on_message(message: discord.Message):
         friend_id = result["heartbeat_meta"].get("game_id") or extract_friend_id(message.content)
         logger.info("Extracted VIP friend_id=%s from message_id=%s", friend_id, message.id)
 
-        if group == "Elite_Four" and friend_id:
+        if group in ("Elite_Four", "Gym_Leader") and friend_id:
             rival_owner = await resolve_rival_duo_owner_by_game_id(friend_id)
 
             if rival_owner:
@@ -2091,6 +2087,14 @@ async def on_message(message: discord.Message):
         if should_create_post and post_image_path is not None:
             post_title = build_post_title(result["heartbeat_meta"], result["pack_label"])
             online_mentions = await get_online_mentions(group)
+            online_mentions = await get_online_mentions(group)
+
+            if group in ("Elite_Four", "Gym_Leader") and friend_id:
+                duo_mentions = await get_rival_duo_online_mentions_by_game_id(friend_id)
+
+                for mention in duo_mentions:
+                    if mention not in online_mentions:
+                        online_mentions.append(mention)
 
           #  post_body = build_forum_post_text(
            #     result["heartbeat_meta"],
