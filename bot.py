@@ -1234,13 +1234,12 @@ async def get_online_mentions(group: str) -> List[str]:
                 mentions.append(f"<@{discord_id}>")
 
         # Rival Duo
+        if group in ("Elite_Four", "Gym_Leader"):
+            duo_mentions = await get_online_rival_duo_mentions()
 
-    if group in ("Elite_Four", "Gym_Leader"):
-        duo_mentions = await get_online_rival_duo_mentions()
-
-        for mention in duo_mentions:
-            if mention not in mentions:
-                mentions.append(mention)
+            for mention in duo_mentions:
+                if mention not in mentions:
+                    mentions.append(mention)
 
         return mentions
 
