@@ -1020,139 +1020,25 @@ async def resolve_rival_duo_owner_by_game_id(game_id: str):
         print(f"❌ Error resolving rival duo owner: {e}")
         return None
 
-async def get_rival_duo_online_mentions_by_game_id(game_id: str) -> List[str]:
-    if not game_id:
-        return []
+async def get_rival_duo_mentions_from_online_ids(online_ids):
+    """
+    Devuelve menciones de Rival Duo usando SOLO el ID activo que está en online:Elite_Four.
+    No menciona a los dos, solo al dueño del ID activo.
+    """
+    mentions = []
 
-    try:
-        rival_duos = await redis_hgetall_json(rival_duos_key())
-        mentions = []
+    for game_id in online_ids:
+        owner = await resolve_rival_duo_owner_by_game_id(game_id)
 
-        game_id = str(game_id).strip()
+        if not owner:
+            continue
 
-        logger.info(
-            "RIVAL DUO DEBUG | buscando game_id=%s | duos=%s",
-            game_id,
-            len(rival_duos)
-        )
+        mention = owner.get("mention")
 
-        for duo_id, duo in rival_duos.items():
-            if not duo:
-                continue
+        if mention and mention not in mentions:
+            mentions.append(mention)
 
-            members = duo.get("members") or {}
-            online_users = duo.get("onlineUsers") or {}
-            last_heartbeat = duo.get("lastHeartbeatAt") or {}
-
-            logger.info(
-                "RIVAL DUO DEBUG | duo=%s | members=%s | onlineUsers=%s | lastHeartbeatAt=%s",
-                duo_id,
-                members,
-                online_users,
-                last_heartbeat
-            )
-
-            belongs_to_duo = False
-
-            for discord_id, member_data in members.items():
-                member_game_id = str(
-                    member_data.get("gameId") or ""
-                ).strip()
-
-                logger.info(
-                    "RIVAL DUO DEBUG | miembro=%s | game_id=%s | buscado=%s",
-                    discord_id,
-                    member_game_id,
-                    game_id
-                )
-
-                if member_game_id == game_id:
-                    belongs_to_duo = True
-                    break
-
-            if not belongs_to_duo:
-                continue
-
-            logger.info(
-                "RIVAL DUO DEBUG | ENCONTRADO DUO=%s PARA game_id=%s",
-                duo_id,
-                game_id
-            )
-
-            for discord_id in members.keys():
-                discord_id = str(discord_id)
-
-                online_value = online_users.get(discord_id)
-                last = last_heartbeat.get(discord_id)
-
-                logger.info(
-                    "RIVAL DUO DEBUG | miembro=%s | online=%r | heartbeat=%r",
-                    discord_id,
-                    online_value,
-                    last
-                )
-
-                if online_value is not True:
-                    logger.info(
-                        "RIVAL DUO DEBUG | DESCARTADO %s: online != True",
-                        discord_id
-                    )
-                    continue
-
-                if not last:
-                    logger.info(
-                        "RIVAL DUO DEBUG | DESCARTADO %s: sin heartbeat",
-                        discord_id
-                    )
-                    continue
-
-                try:
-                    last = float(last)
-                except (TypeError, ValueError):
-                    logger.info(
-                        "RIVAL DUO DEBUG | DESCARTADO %s: heartbeat inválido=%r",
-                        discord_id,
-                        last
-                    )
-                    continue
-
-                age = time.time() * 1000 - last
-
-                logger.info(
-                    "RIVAL DUO DEBUG | miembro=%s | heartbeat_age_ms=%s",
-                    discord_id,
-                    age
-                )
-
-                if age >= 45 * 60 * 1000:
-                    logger.info(
-                        "RIVAL DUO DEBUG | DESCARTADO %s: heartbeat viejo",
-                        discord_id
-                    )
-                    continue
-
-                mention = f"<@{discord_id}>"
-
-                if mention not in mentions:
-                    mentions.append(mention)
-
-            break
-
-        logger.info(
-            "RIVAL DUO DEBUG | RESULTADO FINAL game_id=%s -> %s",
-            game_id,
-            mentions
-        )
-
-        return mentions
-
-    except Exception as e:
-        logger.exception(
-            "Error obteniendo miembros online del Rival Duo game_id=%s: %s",
-            game_id,
-            e
-        )
-        return []
+    return mentions
     
 async def add_vip_id(friend_id: str, group: str) -> bool:
     if not friend_id:
@@ -1296,11 +1182,19 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
+        if group == "Elite_Four":
+            duo_mentions = await get_rival_duo_mentions_from_online_ids(online_ids)
+
+            for mention in duo_mentions:
+                if mention not in mentions:
+                    mentions.append(mention)
+
         return mentions
 
     except Exception as e:
         logger.exception("get_online_mentions Redis error: %s", e)
         return []
+
 def get_utc6_date_string() -> str:
     now_utc = datetime.now(timezone.utc)
     utc6 = now_utc - timedelta(hours=6)
@@ -1684,8 +1578,7 @@ async def load_vote_state(group: str) -> dict:
     if group not in GROUP_CONFIG:
         return {}
 
-    data = await redis_hgetall_json(vote_state_key(group))
-
+    data = await redis_get_json(vote_state_key(group), {})
 
     cutoff = time.time() - (72 * 60 * 60)
 
@@ -2060,7 +1953,7 @@ async def on_message(message: discord.Message):
         friend_id = result["heartbeat_meta"].get("game_id") or extract_friend_id(message.content)
         logger.info("Extracted VIP friend_id=%s from message_id=%s", friend_id, message.id)
 
-        if group in ("Elite_Four", "Gym_Leader") and friend_id:
+        if group == "Elite_Four" and friend_id:
             rival_owner = await resolve_rival_duo_owner_by_game_id(friend_id)
 
             if rival_owner:
@@ -2136,7 +2029,6 @@ async def on_message(message: discord.Message):
         should_create_post = is_valid_gp or MAINTENANCE_USE_ORIGINAL_IMAGE
 
         post_image_path = None
-
         if should_create_post:
             if MAINTENANCE_USE_ORIGINAL_IMAGE:
                 post_image_path = original_gp_image_path
@@ -2144,10 +2036,14 @@ async def on_message(message: discord.Message):
                 post_image_path = result["final_image_path"]
 
         if should_create_post and post_image_path is not None:
-            post_title = build_post_title(
-                result["heartbeat_meta"],
-                result["pack_label"]
-            )
+            post_title = build_post_title(result["heartbeat_meta"], result["pack_label"])
+            online_mentions = await get_online_mentions(group)
+
+          #  post_body = build_forum_post_text(
+           #     result["heartbeat_meta"],
+            #    result["pack_label"],
+             #   online_mentions
+            #)     
 
             post_data = await create_forum_post_with_image(
                 client,
@@ -2157,6 +2053,8 @@ async def on_message(message: discord.Message):
                 content="‎"
             )
 
+
+
         if post_data:
             post_thread = post_data["thread"]
             post_url = post_data["jump_url"]
@@ -2165,31 +2063,9 @@ async def on_message(message: discord.Message):
                 online_mentions = []
 
                 try:
-                    # =====================================================
-                    # USUARIOS NORMALES ONLINE DEL GRUPO
-                    # =====================================================
                     online_mentions = await get_online_mentions(group)
-
-                    # =====================================================
-                    # RIVAL DUO
-                    # SOLO ELITE FOUR / GYM LEADER
-                    # SOLO EL DUO DEL GAME ID ACTUAL
-                    # SOLO MIEMBROS QUE ESTEN ONLINE
-                    # =====================================================
-                    if group in ("Elite_Four", "Gym_Leader") and friend_id:
-                        duo_mentions = await get_rival_duo_online_mentions_by_game_id(
-                            friend_id
-                        )
-
-                        for mention in duo_mentions:
-                            if mention not in online_mentions:
-                                online_mentions.append(mention)
-
                 except Exception as e:
-                    logger.exception(
-                        "Failed to load online mentions: %s",
-                        e
-                    )
+                    logger.exception("Failed to load online mentions: %s", e)
 
                 info_panel = build_forum_info_panel(
                     result["heartbeat_meta"],
@@ -2202,12 +2078,6 @@ async def on_message(message: discord.Message):
 
                 try:
                     vote_data = await load_vote_state(group)
-
-                    logger.info(
-                        "Vote state loaded: %d entries for %s",
-                        len(vote_data),
-                        group
-                    )
 
                     if vote_key not in vote_data:
                         vote_data[vote_key] = {
@@ -2226,28 +2096,14 @@ async def on_message(message: discord.Message):
                             "pack_label": result["pack_label"],
                         }
 
-                    cutoff = time.time() - (72 * 60 * 60)
-
-                    vote_data = {
-                        key: value
-                        for key, value in vote_data.items()
-                        if value.get("created_at", 0) >= cutoff
-                    }
-
                     await save_vote_state(group, vote_data)
                     vote_data_saved = True
 
                 except Exception as e:
-                    logger.exception(
-                        "Failed to save vote state: %s",
-                        e
-                    )
+                    logger.exception("Failed to save vote state: %s", e)
 
                 if vote_data_saved:
-                    vote_view = GPVoteView(
-                        vote_key=vote_key,
-                        group=group
-                    )
+                    vote_view = GPVoteView(vote_key=vote_key, group=group)
 
                     try:
                         await post_thread.send(
@@ -2255,25 +2111,15 @@ async def on_message(message: discord.Message):
                             view=vote_view,
                             allowed_mentions=discord.AllowedMentions(users=True)
                         )
-
                     except Exception as e:
-                        logger.exception(
-                            "Failed to send forum info panel with buttons: %s",
-                            e
-                        )
-
+                        logger.exception("Failed to send forum info panel with buttons: %s", e)
                 else:
                     try:
                         await post_thread.send(
-                            content=info_panel
-                            + "\n\nVoting disabled (state not saved)."
+                            content=info_panel + "\n\nVoting disabled (state not saved)."
                         )
-
                     except Exception as e:
-                        logger.exception(
-                            "Failed to send forum info panel without buttons: %s",
-                            e
-                        )
+                        logger.exception("Failed to send forum info panel without buttons: %s", e)
 
 ###########
         view = ForumLinkView(
