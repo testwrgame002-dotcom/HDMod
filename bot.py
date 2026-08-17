@@ -1020,25 +1020,44 @@ async def resolve_rival_duo_owner_by_game_id(game_id: str):
         print(f"❌ Error resolving rival duo owner: {e}")
         return None
 
-async def get_rival_duo_mentions_from_online_ids(online_ids):
+async def get_online_rival_duo_mentions():
     """
-    Devuelve menciones de Rival Duo usando SOLO el ID activo que está en online:Elite_Four.
-    No menciona a los dos, solo al dueño del ID activo.
+    Devuelve las menciones de TODOS los miembros de Rival Duo
+    que actualmente están marcados como online.
+
+    Esta función NO depende de Elite_Four ni de Gym_Leader.
+    Por eso los Rival Duo pueden ser mencionados en ambos grupos.
     """
     mentions = []
 
-    for game_id in online_ids:
-        owner = await resolve_rival_duo_owner_by_game_id(game_id)
+    try:
+        rival_duos = await redis_hgetall_json(rival_duos_key())
 
-        if not owner:
-            continue
+        for duo_id, duo in rival_duos.items():
+            if not duo:
+                continue
 
-        mention = owner.get("mention")
+            members = duo.get("members") or {}
+            online_users = duo.get("onlineUsers") or {}
 
-        if mention and mention not in mentions:
-            mentions.append(mention)
+            for discord_id in members.keys():
 
-    return mentions
+                if not online_users.get(str(discord_id), False):
+                    continue
+
+                mention = f"<@{discord_id}>"
+
+                if mention not in mentions:
+                    mentions.append(mention)
+
+        return mentions
+
+    except Exception as e:
+        logger.exception(
+            "Error obteniendo menciones de Rival Duo online: %s",
+            e
+        )
+        return []
     
 async def add_vip_id(friend_id: str, group: str) -> bool:
     if not friend_id:
@@ -1182,9 +1201,8 @@ async def get_online_mentions(group: str) -> List[str]:
             if main_id in online_ids or (sec_id and sec_id in online_ids):
                 mentions.append(f"<@{discord_id}>")
 
-        if group == "Elite_Four":
-            duo_mentions = await get_rival_duo_mentions_from_online_ids(online_ids)
 
+            duo_mentions = await get_online_rival_duo_mentions()
             for mention in duo_mentions:
                 if mention not in mentions:
                     mentions.append(mention)
