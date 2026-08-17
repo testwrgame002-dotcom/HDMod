@@ -1022,16 +1022,22 @@ async def resolve_rival_duo_owner_by_game_id(game_id: str):
 
 async def get_online_rival_duo_mentions():
     """
-    Devuelve las menciones de TODOS los miembros de Rival Duo
-    que actualmente están marcados como online.
+    Devuelve SOLO los miembros de Rival Duo que están realmente online.
 
-    Funciona independientemente del grupo:
-    Elite_Four, Gym_Leader, etc.
+    Se considera online únicamente si:
+    - onlineUsers[discord_id] es exactamente True
+    - y su lastHeartbeatAt sigue dentro del tiempo permitido.
+
+    Esto permite mencionar al miembro online aunque su compañero esté offline.
     """
     mentions = []
 
     try:
         rival_duos = await redis_hgetall_json(rival_duos_key())
+        now = time.time() * 1000
+
+        # Mismo timeout usado por el sistema Rival Duo
+        HEARTBEAT_TIMEOUT_MS = 45 * 60 * 1000
 
         for duo_id, duo in rival_duos.items():
             if not duo:
@@ -1039,12 +1045,37 @@ async def get_online_rival_duo_mentions():
 
             members = duo.get("members") or {}
             online_users = duo.get("onlineUsers") or {}
+            last_heartbeat = duo.get("lastHeartbeatAt") or {}
 
-            for discord_id in members.keys():
+            for discord_id, member_data in members.items():
 
-                if not online_users.get(str(discord_id), False):
+                discord_id = str(discord_id)
+
+                # -------------------------------------------------
+                # 1. DEBE ESTAR MARCADO EXPLÍCITAMENTE COMO TRUE
+                # -------------------------------------------------
+                if online_users.get(discord_id) is not True:
                     continue
 
+                # -------------------------------------------------
+                # 2. COMPROBAR QUE SU HEARTBEAT SIGUE VIGENTE
+                # -------------------------------------------------
+                last = last_heartbeat.get(discord_id)
+
+                if not last:
+                    continue
+
+                try:
+                    last = float(last)
+                except (TypeError, ValueError):
+                    continue
+
+                if now - last >= HEARTBEAT_TIMEOUT_MS:
+                    continue
+
+                # -------------------------------------------------
+                # 3. MENCIONAR SOLO A ESTE MIEMBRO
+                # -------------------------------------------------
                 mention = f"<@{discord_id}>"
 
                 if mention not in mentions:
@@ -1203,6 +1234,8 @@ async def get_online_mentions(group: str) -> List[str]:
                 mentions.append(f"<@{discord_id}>")
 
         # Rival Duo
+
+    if group in ("Elite_Four", "Gym_Leader"):
         duo_mentions = await get_online_rival_duo_mentions()
 
         for mention in duo_mentions:
