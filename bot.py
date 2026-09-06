@@ -735,12 +735,6 @@ async def forward_invalid_message(message: discord.Message, reason: str):
 
         original_text = message.content or "(sin texto)"
 
-        content = (
-
-            f"**Autor:** {message.author} (`{message.author.id}`)\n\n"
-            f"**Alert:**\n"
-            f"```{original_text[:1800]}```"
-        )
 
         files = await collect_message_attachments(message)
 
