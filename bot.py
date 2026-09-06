@@ -25,6 +25,7 @@ DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 CLIENT_ID = int(os.environ.get("CLIENT_ID", "0"))
 FORUM_CHANNEL_ID = int(os.environ.get("FORUM_CHANNEL_ID", "0"))
 LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", "0"))
+INVALID_LOG_CHANNEL_ID = int(os.environ.get("INVALID_LOG_CHANNEL_ID", "0"))
 UPSTASH_REDIS_REST_URL = os.environ.get("UPSTASH_REDIS_REST_URL", "").rstrip("/")
 UPSTASH_REDIS_REST_TOKEN = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "")
 
@@ -719,6 +720,51 @@ async def collect_message_attachments(message: discord.Message) -> List[discord.
 
     return files
 
+async def forward_invalid_message(message: discord.Message, reason: str):
+    if not INVALID_LOG_CHANNEL_ID:
+        return
+
+    try:
+        log_channel = client.get_channel(INVALID_LOG_CHANNEL_ID)
+
+        if log_channel is None:
+            log_channel = await client.fetch_channel(INVALID_LOG_CHANNEL_ID)
+
+        if log_channel is None:
+            return
+
+        original_text = message.content or "(sin texto)"
+
+        content = (
+            f"**Mensaje rechazado del canal <#{message.channel.id}>**\n"
+            f"**Razón:** {reason}\n"
+            f"**Autor:** {message.author} (`{message.author.id}`)\n\n"
+            f"**Mensaje original:**\n"
+            f"```{original_text[:1800]}```"
+        )
+
+        files = await collect_message_attachments(message)
+
+        await log_channel.send(
+            content=content,
+            files=files if files else None
+        )
+
+        await message.delete()
+
+        logger.info(
+            "Mensaje inválido reenviado y eliminado: message_id=%s | razón=%s",
+            message.id,
+            reason
+        )
+
+    except Exception as e:
+        logger.exception(
+            "No se pudo reenviar/eliminar mensaje inválido %s: %s",
+            message.id,
+            e
+        )
+
 def is_target_message(message: discord.Message) -> bool:
     if message.webhook_id is None:
         return False
@@ -731,7 +777,10 @@ def is_target_message(message: discord.Message) -> bool:
     if any(pattern.search(content) for pattern in TRIGGER_PATTERNS):
         return True
 
-    return len(message.attachments) > 0
+    if len(message.attachments) > 0:
+        return True
+
+    return False
 
 def parse_heartbeat_metadata(content: str) -> dict:
     lines = [line.strip() for line in content.splitlines() if line.strip()]
@@ -1853,7 +1902,17 @@ async def on_message(message: discord.Message):
             logger.info("Ignorado: no hay templates cargados")
             return
 
+
         if not is_target_message(message):
+            if (
+                message.webhook_id is not None
+                and message.channel.id in CHANNEL_GROUP_MAP
+            ):
+                await forward_invalid_message(
+                    message,
+                    "No coincide con el formato esperado de God Pack."
+                )
+
             logger.info("Ignorado: no coincide con filtro webhook/canal/trigger")
             return
 
@@ -1862,7 +1921,14 @@ async def on_message(message: discord.Message):
         gp_result = await get_best_gp_image_attachment(message)
         if gp_result is None:
             logger.info("No se encontró imagen válida en attachments")
+
+            await forward_invalid_message(
+                message,
+                "El mensaje coincide con el formato de GP, pero no contiene una imagen válida."
+            )
+
             return
+
 
         gp_attachment, source_img = gp_result
         original_gp_image_path = OUTPUT_DIR / f"original_gp_{message.id}_{gp_attachment.filename}"
