@@ -735,13 +735,16 @@ async def forward_invalid_message(message: discord.Message, reason: str):
 
         original_text = message.content or "(sin texto)"
 
+
         content = (
-            f"**Mensaje rechazado del canal <#{message.channel.id}>**\n"
-            f"**Razón:** {reason}\n"
-            f"**Autor:** {message.author} (`{message.author.id}`)\n\n"
-            f"**Mensaje original:**\n"
+            f"**Rejected message from channel <#{message.channel.id}>**\n"
+            f"**Reason:** {reason}\n"
+            f"**Author:** {message.author} (`{message.author.id}`)\n\n"
+            f"**Original message:**\n"
             f"```{original_text[:1800]}```"
         )
+
+
 
         files = await collect_message_attachments(message)
 
